@@ -1,0 +1,61 @@
+# ── Environment & Secrets ──
+.env
+!.env.example
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Virtual Environment ──
+.venv/
+venv/
+env/
+ENV/
+
+# ── Config (contains personal data) ──
+config/personals.py
+config/search.py
+
+# ── Excel output files ──
+excels/
+
+# ── Learned answers (user-specific) ──
+utils/extra_questions.json
+
+# ── IDE / Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ── OS generated ──
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+.DS_Store?
+._*
+
+# ── Excel temp files ──
+~$*.xlsx
+~$*.xls
+
+# ── Distribution / Build ──
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ── Logs ──
+*.log
+
+# ── Misc ──
+*.bak
+*.tmp
+*.temp

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Applied Jobs Viewer</title>
+    <link rel="stylesheet" href="applied_jobs_view.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <span class="logo-icon">💼</span>
+                <h1>Applied Jobs</h1>
+            </div>
+            <div class="search-container">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input type="text" id="searchInput" placeholder="Search company, position, skills..." autocomplete="off">
+                <span id="searchCount" class="search-count"></span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs-container" id="tabsContainer">
+        <!-- Tabs injected by JS -->
+    </nav>
+
+    <!-- Loader -->
+    <div class="loader-container" id="loader">
+        <div class="loader-spinner"></div>
+        <p>Loading jobs...</p>
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="emptyState" style="display:none;">
+        <div class="empty-icon">📭</div>
+        <h2>No jobs found</h2>
+        <p id="emptyMessage">No applied jobs data in this folder yet.</p>
+    </div>
+
+    <!-- Jobs container -->
+    <main class="jobs-container" id="jobsContainer" style="display:none;">
+        <!-- Date groups and job cards injected by JS -->
+    </main>
+
+    <!-- Stats footer -->
+    <footer class="stats-bar" id="statsBar" style="display:none;">
+        <span id="totalJobs">0 jobs</span>
+        <span id="totalDates">0 days</span>
+    </footer>
+
+    <script src="applied_jobs_view.js"></script>
+</body>
+</html>
