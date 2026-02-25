@@ -1,11 +1,15 @@
 /**
  * Applied Jobs Viewer — Frontend Logic
- * Handles tabs, data fetching, card rendering, search, and empty states.
+ * Handles tabs, data fetching, card rendering, search, pagination, and empty states.
  */
 
 const API_BASE = "";  // same origin
 let currentTab = "";
-let allGroups = [];  // current tab's job groups (date → jobs)
+let allGroups = [];       // current tab's job groups (date → jobs)
+let allFlatJobs = [];     // flattened list of all jobs (for pagination + search)
+let filteredJobs = [];    // after search filter
+let currentPage = 1;
+let pageSize = 20;
 
 // DOM elements
 const tabsContainer = document.getElementById("tabsContainer");
@@ -18,17 +22,26 @@ const searchCount = document.getElementById("searchCount");
 const statsBar = document.getElementById("statsBar");
 const totalJobsEl = document.getElementById("totalJobs");
 const totalDatesEl = document.getElementById("totalDates");
+const paginationContainer = document.getElementById("paginationContainer");
+const pageSizeSelect = document.getElementById("pageSizeSelect");
 
 
 // ── Init ────────────────────────────────────────
 async function init() {
     showLoader();
+
+    // Page size selector
+    pageSizeSelect.addEventListener("change", () => {
+        pageSize = parseInt(pageSizeSelect.value);
+        currentPage = 1;
+        renderCurrentView();
+    });
+
     try {
         const res = await fetch(`${API_BASE}/api/tabs`);
         const data = await res.json();
         renderTabs(data.tabs, data.default);
 
-        // Load default tab
         const defaultTab = data.tabs.includes(data.default) ? data.default : data.tabs[0];
         if (defaultTab) {
             await switchTab(defaultTab);
@@ -58,14 +71,13 @@ function renderTabs(tabs, defaultTab) {
 async function switchTab(tabName) {
     currentTab = tabName;
 
-    // Update active tab styling
     document.querySelectorAll(".tab-btn").forEach(btn => {
         btn.classList.toggle("active", btn.dataset.tab === tabName);
     });
 
-    // Clear search
     searchInput.value = "";
     searchCount.textContent = "";
+    currentPage = 1;
 
     showLoader();
 
@@ -80,12 +92,22 @@ async function switchTab(tabName) {
 
         allGroups = data.groups || [];
 
-        if (allGroups.length === 0) {
+        // Flatten all jobs for pagination/search (preserve date info)
+        allFlatJobs = [];
+        allGroups.forEach(group => {
+            group.jobs.forEach(job => {
+                job._date = group.date;
+                allFlatJobs.push(job);
+            });
+        });
+
+        if (allFlatJobs.length === 0) {
             showEmpty(`No applied jobs found in "${toTitleCase(tabName)}" folder.`);
             return;
         }
 
-        renderJobs(allGroups);
+        filteredJobs = allFlatJobs;
+        renderCurrentView();
     } catch (err) {
         showEmpty("Error loading jobs. Check server is running.");
         console.error(err);
@@ -93,21 +115,45 @@ async function switchTab(tabName) {
 }
 
 
+// ── Render Current View (pagination-aware) ───────
+function renderCurrentView() {
+    const totalItems = filteredJobs.length;
+    const totalPages = Math.ceil(totalItems / pageSize);
+
+    if (currentPage > totalPages) currentPage = totalPages || 1;
+
+    const startIdx = (currentPage - 1) * pageSize;
+    const endIdx = Math.min(startIdx + pageSize, totalItems);
+    const pageJobs = filteredJobs.slice(startIdx, endIdx);
+
+    // Group page jobs by date
+    const groupedByDate = [];
+    const dateMap = {};
+    pageJobs.forEach(job => {
+        const date = job._date || "Unknown Date";
+        if (!dateMap[date]) {
+            dateMap[date] = { date, jobs: [] };
+            groupedByDate.push(dateMap[date]);
+        }
+        dateMap[date].jobs.push(job);
+    });
+
+    renderJobs(groupedByDate, totalItems);
+    renderPagination(totalPages);
+}
+
+
 // ── Render Jobs ─────────────────────────────────
-function renderJobs(groups) {
+function renderJobs(groups, totalItems) {
     jobsContainer.innerHTML = "";
-    let totalJobs = 0;
 
     groups.forEach((group, groupIdx) => {
         const section = document.createElement("div");
         section.className = "date-group";
-        section.dataset.date = group.date;
         section.style.animationDelay = `${groupIdx * 0.05}s`;
 
         const jobCount = group.jobs.length;
-        totalJobs += jobCount;
 
-        // Date header
         section.innerHTML = `
             <div class="date-header">
                 <span class="date-label">📅 ${group.date}</span>
@@ -116,7 +162,6 @@ function renderJobs(groups) {
             </div>
         `;
 
-        // Cards grid
         const grid = document.createElement("div");
         grid.className = "cards-grid";
 
@@ -128,14 +173,16 @@ function renderJobs(groups) {
         jobsContainer.appendChild(section);
     });
 
-    // Show container, update stats
+    // Unique dates across ALL filtered jobs (not just current page)
+    const uniqueDates = new Set(filteredJobs.map(j => j._date));
+
     loader.style.display = "none";
     emptyState.style.display = "none";
     jobsContainer.style.display = "block";
     statsBar.style.display = "flex";
 
-    totalJobsEl.textContent = `${totalJobs} job${totalJobs !== 1 ? "s" : ""}`;
-    totalDatesEl.textContent = `${groups.length} day${groups.length !== 1 ? "s" : ""}`;
+    totalJobsEl.textContent = `${totalItems} applied`;
+    totalDatesEl.textContent = `${uniqueDates.size} day${uniqueDates.size !== 1 ? "s" : ""}`;
 }
 
 function createJobCard(job) {
@@ -151,13 +198,23 @@ function createJobCard(job) {
     const link = job["Link"] || "";
     const time = job["time"] || "";
 
-    // Searchable text (stored as data attribute)
     card.dataset.searchText = `${position} ${company} ${location} ${experience} ${salary} ${skills}`.toLowerCase();
 
-    // Position (with link if available)
+    // Position with link
     const positionHTML = link
         ? `<a href="${escapeHTML(link)}" target="_blank" rel="noopener">${escapeHTML(position)}</a>`
         : escapeHTML(position);
+
+    // Link icon (external link button)
+    const linkIconHTML = link
+        ? `<a href="${escapeHTML(link)}" target="_blank" rel="noopener" class="card-link-icon" title="Open job listing">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+               <polyline points="15 3 21 3 21 9"></polyline>
+               <line x1="10" y1="14" x2="21" y2="3"></line>
+             </svg>
+           </a>`
+        : "";
 
     // Meta chips
     let metaHTML = "";
@@ -178,17 +235,98 @@ function createJobCard(job) {
         skillsHTML = skillList.map(s => `<span class="skill-tag">${escapeHTML(s)}</span>`).join("");
     }
 
+    // Company search icon (Google)
+    const googleSearchURL = company
+        ? `https://www.google.com/search?q=${encodeURIComponent(company + " Company")}`
+        : "";
+    const companySearchHTML = company && googleSearchURL
+        ? `<a href="${escapeHTML(googleSearchURL)}" target="_blank" rel="noopener" class="company-search-icon" title="Search ${escapeHTML(company)} on Google">
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+               <circle cx="11" cy="11" r="8"></circle>
+               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+             </svg>
+           </a>`
+        : "";
+
     card.innerHTML = `
         <div class="card-top">
             <div class="card-position">${positionHTML}</div>
-            ${time ? `<span class="card-time">${escapeHTML(time)}</span>` : ""}
+            <div class="card-top-right">
+                ${time ? `<span class="card-time">${escapeHTML(time)}</span>` : ""}
+                ${linkIconHTML}
+            </div>
         </div>
-        <div class="card-company">${escapeHTML(company)}</div>
+        <div class="card-company">${escapeHTML(company)}${companySearchHTML}</div>
         ${metaHTML ? `<div class="card-meta">${metaHTML}</div>` : ""}
         ${skillsHTML ? `<div class="card-skills">${skillsHTML}</div>` : ""}
     `;
 
     return card;
+}
+
+
+// ── Pagination ──────────────────────────────────
+function renderPagination(totalPages) {
+    paginationContainer.innerHTML = "";
+
+    if (totalPages <= 1) {
+        paginationContainer.style.display = "none";
+        return;
+    }
+
+    paginationContainer.style.display = "flex";
+
+    const PAGES_PER_GROUP = 10;
+    const currentGroup = Math.floor((currentPage - 1) / PAGES_PER_GROUP);
+    const groupStart = currentGroup * PAGES_PER_GROUP + 1;
+    const groupEnd = Math.min(groupStart + PAGES_PER_GROUP - 1, totalPages);
+
+    // << Previous group
+    if (groupStart > 1) {
+        const prevBtn = createPageBtn("«", () => {
+            currentPage = groupStart - 1;
+            renderCurrentView();
+            scrollToTop();
+        });
+        prevBtn.classList.add("page-nav");
+        prevBtn.title = `Pages ${groupStart - PAGES_PER_GROUP}–${groupStart - 1}`;
+        paginationContainer.appendChild(prevBtn);
+    }
+
+    // Page numbers
+    for (let i = groupStart; i <= groupEnd; i++) {
+        const btn = createPageBtn(i, () => {
+            currentPage = i;
+            renderCurrentView();
+            scrollToTop();
+        });
+        if (i === currentPage) btn.classList.add("active");
+        paginationContainer.appendChild(btn);
+    }
+
+    // >> Next group
+    if (groupEnd < totalPages) {
+        const nextBtn = createPageBtn("»", () => {
+            currentPage = groupEnd + 1;
+            renderCurrentView();
+            scrollToTop();
+        });
+        nextBtn.classList.add("page-nav");
+        nextBtn.title = `Pages ${groupEnd + 1}–${Math.min(groupEnd + PAGES_PER_GROUP, totalPages)}`;
+        paginationContainer.appendChild(nextBtn);
+    }
+}
+
+function createPageBtn(label, onClick) {
+    const btn = document.createElement("button");
+    btn.className = "page-btn";
+    btn.textContent = label;
+    btn.addEventListener("click", onClick);
+    return btn;
+}
+
+function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 
@@ -199,42 +337,31 @@ function handleSearch() {
     const query = searchInput.value.trim().toLowerCase();
 
     if (!query) {
-        // Reset: show all cards, remove highlights
-        document.querySelectorAll(".job-card").forEach(card => card.classList.remove("hidden"));
-        document.querySelectorAll(".date-group").forEach(group => group.classList.remove("hidden"));
+        filteredJobs = allFlatJobs;
         searchCount.textContent = "";
-        updateDateCounts();
-        return;
+    } else {
+        const terms = query.split(/\s+/);
+        filteredJobs = allFlatJobs.filter(job => {
+            const text = `${job["Position"] || ""} ${job["Company"] || ""} ${job["Location"] || ""} ${job["Experience"] || ""} ${job["Salary"] || ""} ${job["Skills"] || ""}`.toLowerCase();
+            return terms.every(term => text.includes(term));
+        });
+        searchCount.textContent = `${filteredJobs.length} result${filteredJobs.length !== 1 ? "s" : ""}`;
     }
 
-    const terms = query.split(/\s+/);
-    let visibleCount = 0;
+    currentPage = 1;
 
-    document.querySelectorAll(".job-card").forEach(card => {
-        const text = card.dataset.searchText;
-        const matches = terms.every(term => text.includes(term));
-        card.classList.toggle("hidden", !matches);
-        if (matches) visibleCount++;
-    });
-
-    // Hide empty date groups
-    document.querySelectorAll(".date-group").forEach(group => {
-        const visibleCards = group.querySelectorAll(".job-card:not(.hidden)");
-        group.classList.toggle("hidden", visibleCards.length === 0);
-    });
-
-    searchCount.textContent = `${visibleCount} result${visibleCount !== 1 ? "s" : ""}`;
-    updateDateCounts();
-}
-
-function updateDateCounts() {
-    document.querySelectorAll(".date-group").forEach(group => {
-        const visibleCards = group.querySelectorAll(".job-card:not(.hidden)").length;
-        const countEl = group.querySelector(".date-count");
-        if (countEl) {
-            countEl.textContent = `${visibleCards} job${visibleCards !== 1 ? "s" : ""}`;
-        }
-    });
+    if (filteredJobs.length === 0 && query) {
+        jobsContainer.style.display = "none";
+        paginationContainer.style.display = "none";
+        emptyState.style.display = "block";
+        emptyMessage.textContent = `No results for "${query}"`;
+        statsBar.style.display = "none";
+    } else if (filteredJobs.length === 0) {
+        showEmpty("No applied jobs found.");
+    } else {
+        emptyState.style.display = "none";
+        renderCurrentView();
+    }
 }
 
 
@@ -244,6 +371,7 @@ function showLoader() {
     emptyState.style.display = "none";
     jobsContainer.style.display = "none";
     statsBar.style.display = "none";
+    paginationContainer.style.display = "none";
 }
 
 function showEmpty(message) {
@@ -251,6 +379,7 @@ function showEmpty(message) {
     emptyState.style.display = "block";
     jobsContainer.style.display = "none";
     statsBar.style.display = "none";
+    paginationContainer.style.display = "none";
     emptyMessage.textContent = message || "No applied jobs data in this folder yet.";
 }
 

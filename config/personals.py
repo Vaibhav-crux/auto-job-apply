@@ -87,8 +87,11 @@ recent_degree_department = "Computer Science and Engineering" # Information Tech
 # Your recent degree percentage
 recent_degree_cgpa = 8.5 # Your recent degree percentage
 
-# Your recent degree year
-recent_degree_year = 2024
+# Your recent degree started year
+recent_degree_started_year = 2020
+
+# Your recent degree completion year
+recent_degree_completion_year = 2024
 
 # Your skills
 skills = {

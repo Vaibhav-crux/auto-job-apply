@@ -21,6 +21,9 @@ from config.personals import (
     gender, date_of_birth, disability_status, veteran_status,
     skills, cover_letter,
     relocation_location, relocation_preference,
+    recent_degree_college, recent_degree_city, recent_degree_state,
+    recent_degree_country, recent_degree, recent_degree_department,
+    recent_degree_cgpa, recent_degree_started_year, recent_degree_completion_year,
 )
 from datetime import datetime, timedelta
 
@@ -175,6 +178,32 @@ QUESTION_MAP = [
     (["linkedin"],                  lambda: linkedin_profile),
     (["github"],                    lambda: github_profile),
     (["portfolio"],                 lambda: github_profile),
+
+    # Education / Academic
+    (["college", "name"],           lambda: recent_degree_college),
+    (["university", "name"],        lambda: recent_degree_college),
+    (["institute", "name"],         lambda: recent_degree_college),
+    (["college"],                   lambda: recent_degree_college),
+    (["university"],                lambda: recent_degree_college),
+    (["institute"],                 lambda: recent_degree_college),
+    (["degree", "name"],            lambda: recent_degree),
+    (["qualification"],             lambda: recent_degree),
+    (["degree"],                    lambda: recent_degree),
+    (["branch"],                    lambda: recent_degree_department),
+    (["department"],                lambda: recent_degree_department),
+    (["specialization"],            lambda: recent_degree_department),
+    (["stream"],                    lambda: recent_degree_department),
+    (["cgpa"],                      lambda: str(recent_degree_cgpa)),
+    (["percentage"],                lambda: str(recent_degree_cgpa)),
+    (["gpa"],                       lambda: str(recent_degree_cgpa)),
+    (["graduation", "year"],        lambda: str(recent_degree_completion_year)),
+    (["completion", "year"],        lambda: str(recent_degree_completion_year)),
+    (["passing", "year"],           lambda: str(recent_degree_completion_year)),
+    (["pass", "out", "year"],       lambda: str(recent_degree_completion_year)),
+    (["passed", "out"],             lambda: str(recent_degree_completion_year)),
+    (["year", "passing"],           lambda: str(recent_degree_completion_year)),
+    (["started", "year"],           lambda: str(recent_degree_started_year)),
+    (["admission", "year"],         lambda: str(recent_degree_started_year)),
 
     # Relocation
     (["relocate"],                  None),  # handled specially below

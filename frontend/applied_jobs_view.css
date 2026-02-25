@@ -93,6 +93,35 @@ body {
     background-clip: text;
 }
 
+/* ── Header Stats Badges ─────────────────────── */
+.header-stats {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.stat-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    background: rgba(124, 92, 252, 0.1);
+    border: 1px solid rgba(124, 92, 252, 0.2);
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent-light);
+    white-space: nowrap;
+}
+
+.stat-badge svg {
+    width: 16px;
+    height: 16px;
+    stroke: var(--accent-light);
+    flex-shrink: 0;
+}
+
 .search-container {
     flex: 1;
     max-width: 480px;
@@ -250,7 +279,7 @@ body {
 .jobs-container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 24px 32px 100px;
+    padding: 24px 32px 16px;
 }
 
 /* ── Date Group ──────────────────────────────── */
@@ -364,12 +393,40 @@ body {
     color: var(--accent-light);
 }
 
+.card-top-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 .card-time {
     font-size: 11px;
     color: var(--text-muted);
     white-space: nowrap;
     padding-top: 3px;
-    flex-shrink: 0;
+}
+
+.card-link-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    transition: var(--transition);
+    text-decoration: none;
+}
+
+.card-link-icon:hover {
+    color: var(--accent-light);
+    background: var(--accent-glow);
+}
+
+.card-link-icon svg {
+    width: 16px;
+    height: 16px;
 }
 
 .card-company {
@@ -385,6 +442,30 @@ body {
 .card-company::before {
     content: '🏢';
     font-size: 13px;
+}
+
+.company-search-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    color: var(--text-muted);
+    transition: var(--transition);
+    text-decoration: none;
+    margin-left: 2px;
+    flex-shrink: 0;
+}
+
+.company-search-icon:hover {
+    color: var(--info);
+    background: rgba(96, 165, 250, 0.15);
+}
+
+.company-search-icon svg {
+    width: 13px;
+    height: 13px;
 }
 
 .card-meta {
@@ -445,23 +526,93 @@ body {
     display: none;
 }
 
-/* ── Stats Footer ────────────────────────────── */
-.stats-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: var(--bg-header);
-    backdrop-filter: blur(20px);
-    border-top: 1px solid var(--border);
-    padding: 10px 32px;
+/* ── Pagination ──────────────────────────────── */
+.pagination-wrapper {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 8px 32px 24px;
     display: flex;
+    align-items: center;
     justify-content: center;
-    gap: 32px;
+    gap: 24px;
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.page-btn {
+    min-width: 36px;
+    height: 36px;
+    padding: 0 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.page-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.page-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+.page-btn.page-nav {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent-light);
+}
+
+.page-btn.page-nav:hover {
+    background: var(--accent-glow);
+    color: var(--accent-light);
+}
+
+.page-size-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 13px;
     color: var(--text-muted);
-    z-index: 100;
 }
+
+.page-size-select {
+    padding: 6px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    outline: none;
+    transition: var(--transition);
+}
+
+.page-size-select:focus {
+    border-color: var(--accent);
+}
+
+.page-size-select option {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+
 
 /* ── Responsive ──────────────────────────────── */
 @media (max-width: 768px) {
