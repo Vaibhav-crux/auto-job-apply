@@ -14,9 +14,6 @@ venv/
 env/
 ENV/
 
-# ── Config (contains personal data) ──
-config/personals.py
-config/search.py
 
 # ── Excel output files ──
 excels/
