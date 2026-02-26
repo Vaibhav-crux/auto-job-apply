@@ -17,8 +17,8 @@ from selenium.common.exceptions import (
 # Load environment variables
 load_dotenv()
 
-EMAIL = os.getenv("EMAIL")
-PASSWORD = os.getenv("EMAIL_PASSWORD")
+EMAIL = os.getenv("NAUKRI_EMAIL")
+PASSWORD = os.getenv("NAUKRI_EMAIL_PASSWORD")
 
 # Add project root to path so we can import config
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

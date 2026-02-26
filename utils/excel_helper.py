@@ -13,14 +13,15 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _separator_added = False
 
 
-def save_to_excel(job):
-    """Save a single applied job to excels/applied_jobs_{DD_MM_YYYY}.xlsx.
+def save_to_excel(job, platform="naukri"):
+    """Save a single applied job to excels/{platform}/applied_jobs_{DD_MM_YYYY}.xlsx.
 
     If the file already exists (re-run same day), appends data with a blue separator row
     (only once per session).
 
     Args:
         job: dict with keys: position, company, location, experience, salary, skills, url, applied_at
+        platform: subdirectory name, e.g. "naukri" or "hirist"
     """
     global _separator_added
 
@@ -31,7 +32,7 @@ def save_to_excel(job):
         print("  ⚠️ openpyxl not installed. Run: pip install openpyxl")
         return
 
-    excels_dir = os.path.join(PROJECT_ROOT, "excels", "naukri")
+    excels_dir = os.path.join(PROJECT_ROOT, "excels", platform)
     os.makedirs(excels_dir, exist_ok=True)
 
     today_str = datetime.now().strftime("%d_%m_%Y")
