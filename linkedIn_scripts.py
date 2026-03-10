@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import threading
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -19,7 +20,7 @@ PASSWORD = os.getenv("LINKEDIN_PASSWORD")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Import search config
-from config.search import search_terms, search_switch_skills, search_location
+from config.search import search_terms, search_switch_skills, search_location, linkedin_easy_apply, date_posted
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +174,209 @@ def set_location(driver, wait, location):
         raise
 
 
+def click_easy_apply_filter(driver, wait):
+    """Click the LinkedIn 'Easy Apply' filter pill button if not already selected."""
+    # Try locating by ID first, then fall back to aria-label
+    locators = [
+        (By.ID, "searchFilter_applyWithLinkedin"),
+        (By.XPATH, "//button[@aria-label='Easy Apply filter.']"),
+        (By.XPATH, "//button[contains(@aria-label,'Easy Apply')]"),
+    ]
+
+    easy_apply_btn = None
+    for by, value in locators:
+        try:
+            easy_apply_btn = wait.until(EC.presence_of_element_located((by, value)))
+            break
+        except Exception:
+            continue
+
+    if easy_apply_btn is None:
+        print("⚠️ 'Easy Apply' filter button not found on this page — skipping")
+        return
+
+    try:
+        # Scroll the button into view to avoid click interception
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", easy_apply_btn)
+        time.sleep(0.5)
+
+        # Check if already active
+        if easy_apply_btn.get_attribute("aria-checked") == "true":
+            print("ℹ️ 'Easy Apply' filter already active")
+            return
+
+        # Use JS click — most reliable for LinkedIn pill/filter buttons
+        driver.execute_script("arguments[0].click();", easy_apply_btn)
+        print("✅ Clicked 'Easy Apply' filter")
+        time.sleep(2)  # Wait for results to refresh
+    except Exception as e:
+        print(f"⚠️ Could not click 'Easy Apply' filter: {e}")
+
+
+def click_date_posted_filter(driver, wait):
+    """Open the 'Date posted' dropdown, select the right option, and click 'Show results'."""
+    # Map config value → LinkedIn radio input ID (stable semantic IDs, NOT dynamic ember IDs)
+    # LinkedIn options: r86400 (24h), r604800 (week), r2592000 (month)
+    if date_posted == 1:
+        radio_id = "timePostedRange-r86400"
+        label = "Past 24 hours"
+    elif date_posted <= 7:
+        radio_id = "timePostedRange-r604800"
+        label = "Past week"
+    elif date_posted <= 30:
+        radio_id = "timePostedRange-r2592000"
+        label = "Past month"
+    else:
+        print("ℹ️ date_posted not mapped to a LinkedIn filter — skipping Date posted filter")
+        return
+
+    try:
+        # ── Step 1: Open the 'Date posted' pill dropdown ──────────────────────
+        date_btn = wait.until(
+            EC.element_to_be_clickable((By.ID, "searchFilter_timePostedRange"))
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", date_btn)
+        time.sleep(0.5)
+        driver.execute_script("arguments[0].click();", date_btn)
+        print("✅ Opened 'Date posted' dropdown")
+
+        # ── Step 2: Wait for dropdown panel to appear before reading radio ────
+        # Presence of any date-posted radio input confirms the panel is open
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "input[name='date-posted-filter-value']")
+        ))
+        time.sleep(0.3)
+
+        # ── Step 3: Click the radio (timePostedRange-* IDs are stable) ────────
+        radio = driver.find_element(By.ID, radio_id)
+        driver.execute_script("arguments[0].click();", radio)
+        print(f"✅ Selected Date posted: {label}")
+        time.sleep(0.5)
+
+        # ── Step 4: Click 'Show X results' button ─────────────────────────────
+        # aria-label starts with "Apply current filter" — the result count is dynamic
+        # so we match on the stable prefix only (never use ember IDs — they change every load)
+        show_btn = wait.until(EC.element_to_be_clickable(
+            (By.XPATH, "//button[contains(@aria-label, 'Apply current filter')]")
+        ))
+        driver.execute_script("arguments[0].click();", show_btn)
+        print("✅ Clicked 'Show results' — filter applied")
+        time.sleep(2)  # Wait for results to refresh
+
+    except Exception as e:
+        print(f"⚠️ Could not set 'Date posted' filter: {e}")
+        # Try to close any open dropdown gracefully
+        try:
+            driver.find_element(By.ID, "searchFilter_timePostedRange").click()
+        except Exception:
+            pass
+
+def wait_for_user_or_timeout(timeout=60):
+    """Wait up to `timeout` seconds for the user to press Enter, then continue."""
+    print(f"\n⏳ You have {timeout}s to apply any filters manually in the browser.")
+    print("   Press Enter at any time to skip the wait and start browsing jobs...")
+
+    entered = threading.Event()
+
+    def _read_input():
+        try:
+            input()
+        except Exception:
+            pass
+        entered.set()
+
+    t = threading.Thread(target=_read_input, daemon=True)
+    t.start()
+
+    # Count down, printing remaining seconds every 10s
+    interval = 10
+    elapsed = 0
+    while elapsed < timeout:
+        if entered.wait(timeout=min(interval, timeout - elapsed)):
+            print("✅ Enter pressed — starting job browsing now")
+            return
+        elapsed += interval
+        remaining = timeout - elapsed
+        if remaining > 0:
+            print(f"   ⏳ {remaining}s remaining... (press Enter to skip)")
+
+    print("⏰ Timeout reached — starting job browsing automatically")
+
+
+def browse_job_cards(driver, wait, count):
+    """Click on the first `count` job cards in the search results list."""
+    if count <= 0:
+        print("ℹ️ search_switch_skills is 0 — skipping job browsing")
+        return
+
+    print(f"\n🗂️ Browsing up to {count} job cards from the results list...")
+
+    # LinkedIn can render cards as either:
+    #   <li data-occludable-job-id="...">  (outer scaffold wrapper)
+    #   <div data-job-id="...">            (inner clickable card container)
+    # After manual filter changes the page reloads — wait actively for cards
+    # rather than relying on a fixed sleep.
+    SELECTORS = [
+        ("li[data-occludable-job-id]", "data-occludable-job-id"),
+        ("div[data-job-id]",           "data-job-id"),
+    ]
+
+    job_cards = []
+    id_attr = None
+
+    # Retry up to 3 times with a 3-second gap to handle slow page reloads
+    for attempt in range(1, 4):
+        for selector, attr in SELECTORS:
+            try:
+                # Wait up to 10s for at least one card to appear
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                found = driver.find_elements(By.CSS_SELECTOR, selector)
+                if found:
+                    job_cards = found
+                    id_attr = attr
+                    print(f"   Using selector: {selector} — found {len(found)} cards")
+                    break
+            except Exception:
+                continue
+        if job_cards:
+            break
+        print(f"   ⏳ Attempt {attempt}/3: no cards yet, waiting 3s...")
+        time.sleep(3)
+
+    if not job_cards:
+        print("⚠️ No job cards found after waiting — make sure you're on the job search results page")
+        return
+
+
+    target = min(count, len(job_cards))
+    print(f"   Will click first {target} of {len(job_cards)} cards")
+
+    for i in range(target):
+        card = job_cards[i]
+        job_id = card.get_attribute(id_attr) or f"#{i+1}"
+        try:
+            # Prefer clicking the title link; fall back to the card element itself
+            link = card.find_element(By.CSS_SELECTOR, "a.job-card-container__link")
+            title = link.get_attribute("aria-label") or f"Job {job_id}"
+        except Exception:
+            link = card
+            title = f"Job {job_id}"
+
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link)
+            time.sleep(0.5)
+            driver.execute_script("arguments[0].click();", link)
+            print(f"   [{i+1}/{target}] ✅ Clicked: {title}")
+            time.sleep(1.5)  # Brief pause between clicks
+        except Exception as e:
+            print(f"   [{i+1}/{target}] ⚠️ Could not click job {job_id}: {e}")
+
+    print(f"✅ Done browsing {target} job cards")
+
+
+
 def main():
     chrome_options = Options()
     chrome_options.add_argument("--start-maximized")
@@ -201,13 +405,12 @@ def main():
             # Set location if provided
             if search_location:
                 set_location(driver, wait, search_location)
-            
-            # future functionality: apply for jobs based on search_switch_skills count
-            print(f"ℹ️ Will switch to next skill after {search_switch_skills} applications")
-            print(f"⏸️ Paused for manual job review. Applications logic to be added next.")
-            
-            # keep browser open for manual inspection between searches
-            input(f"\nPress Enter to continue to next skill (or close to exit)...")
+
+            # Filters are applied manually by the user during the wait below
+
+            # Wait for user to apply any extra manual filters, then browse jobs
+            wait_for_user_or_timeout(timeout=60)
+            browse_job_cards(driver, wait, search_switch_skills)
 
         # keep browser open for manual inspection
         input("\n\nPress Enter to close the browser...")
