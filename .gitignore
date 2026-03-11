@@ -58,3 +58,4 @@ build/
 *.temp
 
 chrome_profile/
+test.txt

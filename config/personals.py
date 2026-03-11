@@ -16,10 +16,10 @@ current_country = "India"
 current_pincode = "560001"
 
 # Your current salary
-current_salary = 1200000
+current_salary = 650000
 
 # Expected salary
-expected_salary = 1500000
+expected_salary = 850000
 
 # Your current company
 current_company = "Informatica"
