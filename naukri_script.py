@@ -30,6 +30,7 @@ from config.search import (
 )
 from utils.matching import find_answer, save_question
 from utils.confirm_popup import ConfirmPopup
+from utils.job_summary_popup import JobSummaryPopup
 from utils.excel_helper import save_to_excel
 from config.settings import application_limit, skip_questions
 
@@ -899,7 +900,7 @@ def browse_jobs(driver, wait):
             print("\n  ⚠️ No more pages available.")
             break
 
-    print(f"\n📊 Summary: Applied {applied_count}/{application_limit} | Skipped {skipped_count} | External {external_count} | Total processed {total_processed}")
+    return applied_count, skipped_count, external_count, total_processed
 
 
 def main():
@@ -924,10 +925,15 @@ def main():
         apply_filters(driver, wait)
 
         # Step 4: Browse and open job listings
-        browse_jobs(driver, wait)
+        applied_count, skipped_count, external_count, total_processed = browse_jobs(driver, wait)
 
-        # Keep browser open for inspection
-        input("\n\nPress Enter to close the browser...")
+        # Show summary popup
+        summary_popup = JobSummaryPopup()
+        summary_text = "Application limit reached ({}).\n\n📊 Summary: Applied {}/{} | Skipped {} | External {} | Total processed {}".format(
+            application_limit, applied_count, application_limit, skipped_count, external_count, total_processed
+        )
+        summary_popup.show(summary_text)
+        summary_popup.destroy()
 
     except Exception as e:
         print(f"❌ Error: {e}")

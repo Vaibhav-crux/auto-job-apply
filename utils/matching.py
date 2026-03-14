@@ -311,6 +311,46 @@ def _pick_best_option(answer, options):
     return None
 
 
+def _handle_sentinel(keywords, question_text):
+    """Handle special sentinel cases in QUESTION_MAP."""
+    if any(kw in keywords for kw in ["relocate", "residing", "willing"]):
+        return _relocation_answer(question_text)
+    else:
+        # Skill-specific experience sentinel
+        return _skill_experience_answer(question_text)
+
+
+def _get_raw_answer(keywords, answer_fn, question_text):
+    """Get raw answer from QUESTION_MAP entry."""
+    if answer_fn is None:
+        raw_answer = _handle_sentinel(keywords, question_text)
+        if raw_answer is None:
+            return None  # Fall through
+    else:
+        raw_answer = answer_fn() if callable(answer_fn) else answer_fn
+    return raw_answer
+
+
+def _match_to_options(raw_answer, options):
+    """Match raw answer to options if provided."""
+    if not options:
+        return str(raw_answer), "auto"
+    
+    matched_opt = _pick_best_option(raw_answer, options)
+    if matched_opt:
+        return matched_opt, "auto"
+    return raw_answer, "auto"
+
+
+def _handle_learned_answer(learned_answer, options):
+    """Handle learned answer matching to options."""
+    if options:
+        matched = _pick_best_option(learned_answer, options)
+        if matched:
+            return matched, "learned"
+    return str(learned_answer), "learned"
+
+
 # ──────────────────────────────────────────────
 # Main matching function
 # ──────────────────────────────────────────────
@@ -331,38 +371,16 @@ def find_answer(question_text, options=None):
     # 1. Try QUESTION_MAP (config-based answers)
     for keywords, answer_fn in QUESTION_MAP:
         if all(kw in q_lower for kw in keywords):
-            # Special handling for relocation questions (answer_fn is None)
-            if answer_fn is None:
-                # Check if this is a relocation sentinel
-                if any(kw in keywords for kw in ["relocate", "residing", "willing"]):
-                    raw_answer = _relocation_answer(question_text)
-                else:
-                    # Skill-specific experience sentinel
-                    raw_answer = _skill_experience_answer(question_text)
-                    if raw_answer is None:
-                        # No skill matched, fall through to next QUESTION_MAP entry
-                        continue
-            else:
-                raw_answer = answer_fn() if callable(answer_fn) else answer_fn
-
-            # If there are options, try to match the answer to an option
-            if options:
-                matched_opt = _pick_best_option(raw_answer, options)
-                if matched_opt:
-                    return matched_opt, "auto"
-                # If raw answer didn't match any option, return it anyway (user can fix via popup)
-                return raw_answer, "auto"
-
-            return str(raw_answer), "auto"
+            raw_answer = _get_raw_answer(keywords, answer_fn, question_text)
+            if raw_answer is None:
+                continue
+            
+            return _match_to_options(raw_answer, options)
 
     # 2. Try learned answers from extra_questions.json
     learned_answer = _match_learned(q_lower)
     if learned_answer is not None:
-        if options:
-            matched = _pick_best_option(learned_answer, options)
-            if matched:
-                return matched, "learned"
-        return str(learned_answer), "learned"
+        return _handle_learned_answer(learned_answer, options)
 
-    # 4. Unknown question
+    # 3. Unknown question
     return "", "unknown"

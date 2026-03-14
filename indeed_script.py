@@ -25,6 +25,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config.search import search_terms, search_location, date_posted, work_mode
 from config.settings import application_limit
 from utils.excel_helper import save_to_excel
+from utils.job_summary_popup import JobSummaryPopup
+from utils.matching import find_answer
 
 # Persistent Chrome profile — keeps cookies/cf_clearance between sessions
 PROFILE_DIR = Path(__file__).parent / "chrome_profile" / "indeed"
@@ -354,17 +356,64 @@ async def apply_filters(tab):
     await asyncio.sleep(1)
 
     # ── Click the matching menu item ──────────────────────────────────────────
-    try:
-        option = await wait_for(
-            tab,
-            f"a[aria-label='{label}']",
-            timeout=10,
-            description=f"Date posted option '{label}'",
-        )
-        await option.click()
+    selected = False
+
+    # Try some known option patterns (anchor, list item, etc.)
+    option_selectors = [
+        f"a[aria-label='{label}']",
+        f"li[aria-label='{label}']",
+        f"li[data-testid^='selection-pill-option-'][aria-label='{label}']",
+    ]
+
+    for selector in option_selectors:
+        try:
+            option = await wait_for(
+                tab,
+                selector,
+                timeout=5,
+                description=f"Date posted option '{label}' using selector {selector}",
+            )
+            await option.click()
+            selected = True
+            break
+        except TimeoutError:
+            continue
+
+    # As a last resort, search all list options for the label text
+    if not selected:
+        try:
+            candidates = await tab.select_all("li[role='option'], a[role='option']")
+            for cand in candidates:
+                try:
+                    html = await cand.get_html()
+                    if html and label in html:
+                        await cand.click()
+                        selected = True
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    if selected:
         print(f"   ✅ Selected: {label}")
-        await asyncio.sleep(3)  # wait for results to refresh
-    except TimeoutError:
+
+        # Click Update (required in newer layouts)
+        try:
+            buttons = await tab.select_all("button")
+            for btn in buttons:
+                try:
+                    html = await btn.get_html()
+                    if html and "Update" in html:
+                        await btn.click()
+                        print("   ✅ Clicked Update")
+                        await asyncio.sleep(3)  # allow results to refresh
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    else:
         print(f"   ⚠️  Could not find option '{label}' in the dropdown")
 
     # ── Job type filter ───────────────────────────────────────────────────────
@@ -409,6 +458,96 @@ async def apply_filters(tab):
 
         except TimeoutError:
             print("   ⚠️  Job type filter button not found — skipping")
+
+async def handle_employer_questions(tab):
+    """Handle Indeed employer questions by parsing HTML and filling answers."""
+    try:
+        # Check if questions page is present
+        questions_heading = await tab.query_selector("h1[data-testid='questions-heading']")
+        if not questions_heading:
+            print("    ℹ️  No employer questions found — skipping")
+            return
+        
+        print("    🤖 Employer questions detected — filling answers…")
+        
+        # Get all question containers
+        question_divs = await tab.select_all("div[id^='q_']")
+        if not question_divs:
+            print("    ⚠️  No question divs found")
+            return
+        
+        for div in question_divs:
+            try:
+                # Get question text from label
+                label = await div.query_selector("label span[data-testid='safe-markup']")
+                if not label:
+                    continue
+                question_html = await label.get_html()
+                if not question_html:
+                    continue
+                # Extract text between > and <
+                if ">" in question_html and "<" in question_html:
+                    question_text = question_html.split(">")[1].split("<")[0].strip()
+                else:
+                    continue
+                
+                print(f"      💬 Q: {question_text[:60]}...")
+                
+                # Find the input element
+                input_el = await div.query_selector("input[name^='q_'], textarea[name^='q_']")
+                if not input_el:
+                    continue
+                
+                # Get answer from matching engine
+                answer, confidence = find_answer(question_text)
+                if answer and confidence in ["auto", "learned"]:
+                    print(f"      ✅ A: {answer} ({confidence})")
+                    
+                    try:
+                        # Set the value using JavaScript with the element
+                        js_code = f"arguments[0].value = `{answer.replace('`', '\\`')}`;"
+                        await tab.evaluate(js_code, input_el)
+                        
+                        # Trigger input event to update UI
+                        trigger_js = f"arguments[0].dispatchEvent(new Event('input', {{bubbles: true}}));"
+                        await tab.evaluate(trigger_js, input_el)
+                    except Exception as js_e:
+                        print(f"      ⚠️  Failed to set answer via JS: {js_e}")
+                else:
+                    print(f"      ❓ No answer found ({confidence})")
+            
+            except Exception as e:
+                print(f"      ⚠️  Error processing question: {e}")
+        
+        # Click Continue after filling questions
+        continue_clicked = False
+        try:
+            # Try to find button with span containing "Continue"
+            all_buttons = await tab.select_all("button")
+            for btn in all_buttons:
+                try:
+                    span = await btn.query_selector("span")
+                    if span:
+                        span_html = await span.get_html()
+                        if span_html and "Continue" in span_html:
+                            await btn.click()
+                            print("    ✅ Clicked Continue after questions")
+                            continue_clicked = True
+                            await asyncio.sleep(5)
+                            break
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"    ⚠️  Failed to find Continue button: {e}")
+        
+        if not continue_clicked:
+            print("    ⚠️  Could not click Continue automatically — please click the 'Continue' button manually in the browser")
+            print("    ⏳ Waiting for you to click it…")
+            # Wait a bit for manual click
+            await asyncio.sleep(10)
+    
+    except Exception as e:
+        print(f"    ⚠️  Error handling employer questions: {e}")
 
 async def browse_jobs(tab, browser):
     """Scrape up to application_limit jobs from the results page."""
@@ -545,138 +684,120 @@ async def browse_jobs(tab, browser):
                         await apply_tab.bring_to_front()
                         print("    👀 Switched to application tab")
                         
-                        # Wait for the "Add a CV for the employer" or Continue button
-                        try:
-                            # Use the specific data-testid the user provided
-                            continue_btn = await wait_for(
-                                apply_tab, 
-                                "button[data-testid='continue-button']", 
-                                timeout=15, 
-                                description="Continue button (Add a CV)"
-                            )
-                            await continue_btn.click()
-                            print("    ✅ Clicked 'Continue' to submit CV")
-                            await asyncio.sleep(2)  # Wait a moment after clicking
-                            
-                            # ── Wait for the "Enter a job that shows relevant experience" section ──
-                            print("    ⌛ Waiting for job experience section…")
-                            try:
-                                job_heading = await wait_for(
-                                    apply_tab,
-                                    "h2.mosaic-provider-module-apply-resume-kousv8",
-                                    timeout=15,
-                                    description="Job experience heading"
-                                )
-                                print("    ✅ Found job experience section")
-                                await asyncio.sleep(1)
-                                
-                                # Click the Continue button on this section
-                                continue_btn_2 = await wait_for(
-                                    apply_tab,
-                                    "button[data-testid='continue-button']",
-                                    timeout=10,
-                                    description="Continue button (Job experience)"
-                                )
-                                await continue_btn_2.click()
-                                print("    ✅ Clicked 'Continue' on job experience section")
-                                await asyncio.sleep(3)
-                                
-                                # ── Wait for the "Please review your application" page ──
-                                print("    ⌛ Waiting for application review page…")
+                        # ── Dynamic application flow ──────────────────────────
+                        # Handle pages in any order: CV submit, job experience, questions, review, submit
+                        steps_completed = set()
+                        import time
+                        start_time = time.time()
+                        last_progress_time = start_time
+                        max_total_wait = 180  # seconds
+                        max_idle_wait = 45    # seconds without progress before giving up
+
+                        while True:
+                            await asyncio.sleep(2)  # Brief pause between checks
+
+                            now = time.time()
+                            if now - start_time > max_total_wait:
+                                print("    ⚠️  Reached max wait time for this application (may be stuck).")
+                                break
+                            if now - last_progress_time > max_idle_wait:
+                                print(f"    ⚠️  No progress for {max_idle_wait} seconds — may be stuck on a page")
+                                break
+
+                            # Check for CV submit page (Continue button for CV)
+                            if "cv_submit" not in steps_completed:
                                 try:
-                                    review_heading = await wait_for(
-                                        apply_tab,
-                                        "h1.mosaic-provider-module-apply-preview-19k0fjx",
-                                        timeout=15,
-                                        description="Review application heading"
-                                    )
-                                    print("    ✅ Found application review page")
-                                    await asyncio.sleep(2)
-                                    
-                                    # ── Handle reCAPTCHA and wait for Submit button to be enabled ──
-                                    print("    ⏳ Checking reCAPTCHA status…")
-                                    import time
-                                    deadline = time.time() + 120  # 2 minutes timeout
-                                    submit_enabled = False
-                                    
-                                    while time.time() < deadline:
-                                        try:
-                                            submit_btn = await apply_tab.query_selector(
-                                                "button[data-testid='submit-application-button']"
-                                            )
-                                            if submit_btn:
-                                                # Check if button is disabled
-                                                is_disabled = await apply_tab.evaluate(
-                                                    'document.querySelector("button[data-testid=\'submit-application-button\']").disabled'
-                                                )
-                                                if not is_disabled:
-                                                    submit_enabled = True
-                                                    print("    ✅ Submit button is now enabled")
-                                                    break
-                                        except Exception:
-                                            pass
-                                        
+                                    continue_btn = await apply_tab.query_selector("button[data-testid='continue-button']")
+                                    if continue_btn:
+                                        await continue_btn.click()
+                                        print("    ✅ Clicked 'Continue' to submit CV")
+                                        steps_completed.add("cv_submit")
+                                        last_progress_time = time.time()
+                                        await asyncio.sleep(2)
+                                        continue
+                                except Exception:
+                                    pass
+
+                            # Check for job experience section
+                            if "job_experience" not in steps_completed:
+                                try:
+                                    job_heading = await apply_tab.query_selector("h2.mosaic-provider-module-apply-resume-kousv8")
+                                    if job_heading:
+                                        print("    ✅ Found job experience section")
+                                        last_progress_time = time.time()
                                         await asyncio.sleep(1)
-                                    
-                                    if not submit_enabled:
-                                        print("    ⚠️  reCAPTCHA not solved or Submit button still disabled after 2 minutes")
-                                        print("    ⏳ Please solve the reCAPTCHA manually in the browser window")
-                                        print("    ⏳ Waiting for you to solve it…")
-                                        
-                                        # Wait up to 5 more minutes for user to solve
-                                        deadline = time.time() + 300
-                                        while time.time() < deadline:
-                                            try:
-                                                submit_btn = await apply_tab.query_selector(
-                                                    "button[data-testid='submit-application-button']"
-                                                )
-                                                if submit_btn:
-                                                    is_disabled = await apply_tab.evaluate(
-                                                        'document.querySelector("button[data-testid=\'submit-application-button\']").disabled'
-                                                    )
-                                                    if not is_disabled:
-                                                        print("    ✅ Submit button enabled after user interaction")
-                                                        break
-                                            except Exception:
-                                                pass
-                                            await asyncio.sleep(1)
-                                    
-                                    # Click the Submit button
-                                    try:
-                                        submit_btn = await apply_tab.query_selector(
-                                            "button[data-testid='submit-application-button']"
-                                        )
-                                        if submit_btn:
-                                            await submit_btn.click()
-                                            print("    ✅ Clicked 'Submit your application'")
+                                        continue_btn = await apply_tab.query_selector("button[data-testid='continue-button']")
+                                        if continue_btn:
+                                            await continue_btn.click()
+                                            print("    ✅ Clicked 'Continue' on job experience section")
+                                            steps_completed.add("job_experience")
+                                            last_progress_time = time.time()
                                             await asyncio.sleep(3)
-                                            print("    🎉 Application submitted successfully!")
-                                            
-                                            # ── Save job to Excel ──────────────────────────
-                                            from datetime import datetime
-                                            job_data = {
-                                                "position": title,
-                                                "company": company,
-                                                "location": location,
-                                                "experience": "N/A",  # Not available from Indeed
-                                                "salary": salary,
-                                                "skills": job_type,
-                                                "url": job_url,
-                                                "applied_at": datetime.now().strftime("%d-%m-%Y %H:%M:%S"),
-                                            }
-                                            save_to_excel(job_data, platform="indeed")
-                                        else:
-                                            print("    ⚠️  Submit button not found")
-                                    except Exception as e:
-                                        print(f"    ⚠️  Failed to click Submit button: {e}")
-                                
-                                except TimeoutError:
-                                    print("    ⚠️  Review page not found or timeout reached.")
-                            except TimeoutError:
-                                print("    ⚠️  Job experience section not found or timeout reached.")
-                            
-                        except TimeoutError:
-                            print("    ⚠️  Did not find the 'Continue' button in time.")
+                                            continue
+                                except Exception:
+                                    pass
+
+                            # Check for employer questions
+                            if "questions" not in steps_completed:
+                                try:
+                                    questions_heading = await apply_tab.query_selector("h1[data-testid='questions-heading']")
+                                    if questions_heading:
+                                        await handle_employer_questions(apply_tab)
+                                        steps_completed.add("questions")
+                                        last_progress_time = time.time()
+                                        continue
+                                except Exception:
+                                    pass
+
+                            # Check for review page
+                            if "review" not in steps_completed:
+                                try:
+                                    review_heading = await apply_tab.query_selector("h1.mosaic-provider-module-apply-preview-19k0fjx")
+                                    if review_heading:
+                                        print("    ✅ Found application review page")
+                                        steps_completed.add("review")
+                                        last_progress_time = time.time()
+                                        await asyncio.sleep(2)
+                                        continue
+                                except Exception:
+                                    pass
+
+                            # Check for submit button (final step)
+                            try:
+                                submit_btn = await apply_tab.query_selector("button[data-testid='submit-application-button']")
+                                if submit_btn:
+                                    # Check if button is disabled (reCAPTCHA)
+                                    is_disabled = await apply_tab.evaluate(
+                                        'document.querySelector("button[data-testid=\'submit-application-button\']").disabled'
+                                    )
+                                    if not is_disabled:
+                                        await submit_btn.click()
+                                        print("    ✅ Clicked 'Submit your application'")
+                                        await asyncio.sleep(3)
+                                        print("    🎉 Application submitted successfully!")
+
+                                        # ── Save job to Excel ──────────────────────────
+                                        from datetime import datetime
+                                        job_data = {
+                                            "position": title,
+                                            "company": company,
+                                            "location": location,
+                                            "experience": "N/A",  # Not available from Indeed
+                                            "salary": salary,
+                                            "skills": job_type,
+                                            "url": job_url,
+                                            "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        }
+                                        save_to_excel(job_data, platform="indeed")
+                                        break  # Exit the loop after successful submission
+                                    else:
+                                        # Submit button disabled, wait for reCAPTCHA
+                                        if now - last_progress_time > 2:
+                                            print("    ⏳ Submit button disabled (reCAPTCHA) — waiting for resolution…")
+                                        await asyncio.sleep(2)
+                                        continue
+                            except Exception:
+                                pass
                         
                         # Close the application tab and return to the main tab
                         await apply_tab.close()
@@ -695,7 +816,7 @@ async def browse_jobs(tab, browser):
         except Exception as e:
             print(f"   ⚠️  Error processing card: {e}")
 
-    print(f"\n✅ Scraped {count} jobs successfully.")
+    return count
 
 
 async def main_async():
@@ -729,10 +850,17 @@ async def main_async():
         await apply_filters(tab)
 
         # ── Scraping ───────────────────────────────────────────────────────────
-        await browse_jobs(tab, browser)
+        count = await browse_jobs(tab, browser)
 
-        # Keep browser open for the next automation phase
-        input("\n\nPress Enter to close the browser...")
+        # Show summary popup if limit reached
+        if count >= application_limit:
+            summary_popup = JobSummaryPopup()
+            summary_text = f"Application limit reached ({application_limit}).\n\n✅ Scraped {count} jobs successfully."
+            summary_popup.show(summary_text)
+            summary_popup.destroy()
+
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
 
 
     except Exception as e:
