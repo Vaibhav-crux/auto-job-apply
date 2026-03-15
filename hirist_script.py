@@ -461,7 +461,11 @@ def handle_screening_questions(driver, wait, popup, job_title):
 
 def browse_jobs(driver, wait, popup):
     """Iterate through job listing cards, open each in a new tab.
-    Paginates through pages until application_limit is reached."""
+
+    Hirist uses infinite scrolling instead of pagination, so we scroll the job
+    listings container and keep processing newly loaded cards until the
+    application_limit is reached or no new jobs load.
+    """
 
     print(f"\n💼 Browsing job listings... (limit: {application_limit})")
 
@@ -472,12 +476,15 @@ def browse_jobs(driver, wait, popup):
     applied_count = 0
     skipped_count = 0
     total_processed = 0
-    applied_jobs_data = []
     main_window = driver.current_window_handle
-    page_num = 1
+
+    seen_job_keys = set()
+    scroll_round = 1
+    max_no_new_scrolls = 3
+    no_new_scrolls = 0
 
     while applied_count < application_limit:
-        print(f"\n  📄 Page {page_num}")
+        print(f"\n  📄 Scroll batch {scroll_round}")
 
         # Wait for job listings to load
         time.sleep(3)
@@ -488,236 +495,229 @@ def browse_jobs(driver, wait, popup):
         )
 
         if not job_cards:
-            print("  ⚠️ No job listings found on this page")
+            print("  ⚠️ No job listings found on the screen")
             break
 
-        print(f"  📝 Found {len(job_cards)} job(s) on page {page_num}")
+        print(f"  📝 Found {len(job_cards)} job(s) on screen")
 
-        limit_reached = False
+        new_job_found = False
 
-        for i, card in enumerate(job_cards):
+        for card in job_cards:
             if applied_count >= application_limit:
-                limit_reached = True
                 break
 
+            # Get the job title
             try:
-                # Get the job title
-                try:
-                    title_el = card.find_element(By.CSS_SELECTOR, "p[data-testid='job_title']")
-                    job_title = title_el.text.strip()
-                except Exception:
-                    job_title = "Unknown"
+                title_el = card.find_element(By.CSS_SELECTOR, "p[data-testid='job_title']")
+                job_title = title_el.text.strip()
+            except Exception:
+                job_title = "Unknown"
 
-                # Get the company name (from the parent card's logo alt or nearby elements)
-                company_name = "Unknown"
-                try:
-                    # The company logo is a sibling of the job-list div, in the parent Paper
-                    parent_paper = card.find_element(By.XPATH, "./ancestor::div[contains(@class, 'MuiPaper-root')]")
-                    logo_el = parent_paper.find_element(By.CSS_SELECTOR, "img.joblist__logo")
-                    # The alt text contains the company identifier
-                    company_name = logo_el.get_attribute("alt") or "Unknown"
-                except Exception:
-                    pass
+            # Get the company name (from the parent card's logo alt or nearby elements)
+            company_name = "Unknown"
+            try:
+                # The company logo is a sibling of the job-list div, in the parent Paper
+                parent_paper = card.find_element(By.XPATH, "./ancestor::div[contains(@class, 'MuiPaper-root')]")
+                logo_el = parent_paper.find_element(By.CSS_SELECTOR, "img.joblist__logo")
+                # The alt text contains the company identifier
+                company_name = logo_el.get_attribute("alt") or "Unknown"
+            except Exception:
+                pass
 
-                total_processed += 1
-
-                # Check if company should be skipped
-                if company_name.lower() in skip_companies_lower:
-                    skipped_count += 1
-                    print(f"  ⏭️  [{total_processed}] Skipping: {job_title} @ {company_name} (blacklisted)")
-                    continue
-
-                # Check if job title contains skip_search_terms
-                title_lower = job_title.lower()
-                skip_title = False
-                for term in skip_terms_lower:
-                    if term in title_lower:
-                        skipped_count += 1
-                        print(f"  ⏭️  [{total_processed}] Skipping: {job_title} @ {company_name} (title contains '{term}')")
-                        skip_title = True
-                        break
-                if skip_title:
-                    continue
-
-                # Scrape job details from the card
-                job_details = {
-                    "position": job_title,
-                    "company": company_name,
-                    "location": "",
-                    "experience": "",
-                    "salary": "",
-                    "skills": "",
-                    "url": "",
-                }
-
-                # Experience from card
-                try:
-                    exp_el = card.find_element(By.CSS_SELECTOR, "span[data-testid='job_experience']")
-                    job_details["experience"] = exp_el.text.strip()
-                except Exception:
-                    pass
-
-                # Location from card
-                try:
-                    loc_el = card.find_element(By.CSS_SELECTOR, "p[data-testid='job_location']")
-                    job_details["location"] = loc_el.text.strip()
-                except Exception:
-                    pass
-
-                # Skills/tags from card
-                try:
-                    tag_els = card.find_elements(By.CSS_SELECTOR, "span[data-testid^='job_tag_']")
-                    job_details["skills"] = ", ".join(t.text.strip() for t in tag_els if t.text.strip())
-                except Exception:
-                    pass
-
-                # Ctrl+Click the job title to open in a new tab
-                print(f"\n  🔗 [{total_processed}] Opening: {job_title} @ {company_name}")
-                ActionChains(driver).key_down(Keys.CONTROL).click(title_el).key_up(Keys.CONTROL).perform()
-                time.sleep(2)
-
-                # Switch to the new tab
-                all_windows = driver.window_handles
-                new_tab = [w for w in all_windows if w != main_window]
-                if not new_tab:
-                    print(f"    ⚠️ No new tab opened, skipping")
-                    continue
-
-                driver.switch_to.window(new_tab[-1])
-                # Bring the new tab to focus in browser
-                driver.execute_script("window.focus();")
-                time.sleep(3)
-
-                # Capture the job URL
-                job_details["url"] = driver.current_url
-
-                # --- Scrape details from the job detail page ---
-                # Position
-                try:
-                    h1_el = driver.find_element(By.CSS_SELECTOR, "h1.MuiTypography-body1")
-                    # The h1 contains the title text plus child divs, get just the text node
-                    job_details["position"] = driver.execute_script(
-                        "return arguments[0].childNodes[0].textContent.trim();", h1_el
-                    )
-                except Exception:
-                    pass
-
-                # Company name (could be an <a> or a <span> inside)
-                try:
-                    company_el = driver.find_element(By.CSS_SELECTOR, "span[data-testid='company-name']")
-                    job_details["company"] = company_el.text.strip()
-                except Exception:
-                    pass
-
-                # Experience
-                try:
-                    exp_el = driver.find_element(By.CSS_SELECTOR, "span[data-testid='experience']")
-                    job_details["experience"] = exp_el.text.strip()
-                except Exception:
-                    pass
-
-                # Location (span right after company-name, no data-testid)
-                try:
-                    loc_el = driver.find_element(
-                        By.CSS_SELECTOR, "span.MuiTypography-version_hirist"
-                    )
-                    job_details["location"] = loc_el.text.strip()
-                except Exception:
-                    pass
-
-                # Skills from the job-header-main div
-                try:
-                    skill_links = driver.find_elements(
-                        By.CSS_SELECTOR, "div[data-testid='job-header-main'] a"
-                    )
-                    job_details["skills"] = ", ".join(
-                        s.text.strip() for s in skill_links if s.text.strip()
-                    )
-                except Exception:
-                    pass
-
-                print(f"    📋 {job_details['position']} @ {job_details['company']}")
-                print(f"       📍 {job_details['location']} | 🧑‍💼 {job_details['experience']} | 🔧 {job_details['skills']}")
-
-                # --- Click Apply button ---
-                # Check if already applied
-                try:
-                    already_applied = driver.find_element(
-                        By.XPATH, "//button[contains(@class, 'MuiButton-textPrimary') and text()='Applied']"
-                    )
-                    if already_applied:
-                        skipped_count += 1
-                        print(f"    ⏭️  Already applied, skipping")
-                        driver.close()
-                        driver.switch_to.window(main_window)
-                        time.sleep(1)
-                        continue
-                except NoSuchElementException:
-                    pass  # Not applied yet, proceed
-
-                try:
-                    apply_btn = wait.until(
-                        EC.element_to_be_clickable(
-                            (By.XPATH, "//button[contains(@class, 'MuiButton-textPrimary') and contains(text(), 'Apply')]")
-                        )
-                    )
-                    apply_btn.click()
-                    print(f"    ✅ Clicked Apply")
-                    time.sleep(2)
-
-                    # Handle screening questions if they appear
-                    success = handle_screening_questions(driver, wait, popup, job_title)
-                    if success:
-                        applied_count += 1
-                        job_details["applied_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        save_to_excel(job_details, platform="hirist")
-                        print(f"    🎉 [{applied_count}/{application_limit}] Applied: {job_details['position']} @ {job_details['company']}")
-                    else:
-                        skipped_count += 1
-                        print(f"    ❌ Skipped (user cancelled / form error): {job_title}")
-
-                except (TimeoutException, NoSuchElementException):
-                    print(f"    ⚠️ No Apply button found, skipping")
-                except Exception as e:
-                    print(f"    ⚠️ Error applying: {e}")
-
-                # Close the job tab and switch back
-                try:
-                    driver.close()
-                except Exception:
-                    pass
-                driver.switch_to.window(main_window)
-                time.sleep(1)
-
-            except Exception as e:
-                print(f"  ⚠️ [{total_processed}] Error processing job card: {e}")
-                try:
-                    driver.switch_to.window(main_window)
-                except Exception:
-                    pass
+            job_key = f"{job_title}||{company_name}"
+            if job_key in seen_job_keys:
                 continue
 
-        # If limit reached, stop pagination
-        if limit_reached:
+            seen_job_keys.add(job_key)
+            new_job_found = True
+            total_processed += 1
+
+            # Check if company should be skipped
+            if company_name.lower() in skip_companies_lower:
+                skipped_count += 1
+                print(f"  ⏭️  [{total_processed}] Skipping: {job_title} @ {company_name} (blacklisted)")
+                continue
+
+            # Check if job title contains skip_search_terms
+            title_lower = job_title.lower()
+            skip_title = False
+            for term in skip_terms_lower:
+                if term in title_lower:
+                    skipped_count += 1
+                    print(f"  ⏭️  [{total_processed}] Skipping: {job_title} @ {company_name} (title contains '{term}')")
+                    skip_title = True
+                    break
+            if skip_title:
+                continue
+
+            # Scrape job details from the card
+            job_details = {
+                "position": job_title,
+                "company": company_name,
+                "location": "",
+                "experience": "",
+                "salary": "",
+                "skills": "",
+                "url": "",
+            }
+
+            # Experience from card
+            try:
+                exp_el = card.find_element(By.CSS_SELECTOR, "span[data-testid='job_experience']")
+                job_details["experience"] = exp_el.text.strip()
+            except Exception:
+                pass
+
+            # Location from card
+            try:
+                loc_el = card.find_element(By.CSS_SELECTOR, "p[data-testid='job_location']")
+                job_details["location"] = loc_el.text.strip()
+            except Exception:
+                pass
+
+            # Skills/tags from card
+            try:
+                tag_els = card.find_elements(By.CSS_SELECTOR, "span[data-testid^='job_tag_']")
+                job_details["skills"] = ", ".join(t.text.strip() for t in tag_els if t.text.strip())
+            except Exception:
+                pass
+
+            # Ctrl+Click the job title to open in a new tab
+            print(f"\n  🔗 [{total_processed}] Opening: {job_title} @ {company_name}")
+            ActionChains(driver).key_down(Keys.CONTROL).click(title_el).key_up(Keys.CONTROL).perform()
+            time.sleep(2)
+
+            # Switch to the new tab
+            all_windows = driver.window_handles
+            new_tab = [w for w in all_windows if w != main_window]
+            if not new_tab:
+                print(f"    ⚠️ No new tab opened, skipping")
+                continue
+
+            driver.switch_to.window(new_tab[-1])
+            # Bring the new tab to focus in browser
+            driver.execute_script("window.focus();")
+            time.sleep(3)
+
+            # Capture the job URL
+            job_details["url"] = driver.current_url
+
+            # --- Scrape details from the job detail page ---
+            # Position
+            try:
+                h1_el = driver.find_element(By.CSS_SELECTOR, "h1.MuiTypography-body1")
+                # The h1 contains the title text plus child divs, get just the text node
+                job_details["position"] = driver.execute_script(
+                    "return arguments[0].childNodes[0].textContent.trim();", h1_el
+                )
+            except Exception:
+                pass
+
+            # Company name (could be an <a> or a <span> inside)
+            try:
+                company_el = driver.find_element(By.CSS_SELECTOR, "span[data-testid='company-name']")
+                job_details["company"] = company_el.text.strip()
+            except Exception:
+                pass
+
+            # Experience
+            try:
+                exp_el = driver.find_element(By.CSS_SELECTOR, "span[data-testid='experience']")
+                job_details["experience"] = exp_el.text.strip()
+            except Exception:
+                pass
+
+            # Location (span right after company-name, no data-testid)
+            try:
+                loc_el = driver.find_element(
+                    By.CSS_SELECTOR, "span.MuiTypography-version_hirist"
+                )
+                job_details["location"] = loc_el.text.strip()
+            except Exception:
+                pass
+
+            # Skills from the job-header-main div
+            try:
+                skill_links = driver.find_elements(
+                    By.CSS_SELECTOR, "div[data-testid='job-header-main'] a"
+                )
+                job_details["skills"] = ", ".join(
+                    s.text.strip() for s in skill_links if s.text.strip()
+                )
+            except Exception:
+                pass
+
+            print(f"    📋 {job_details['position']} @ {job_details['company']}")
+            print(f"       📍 {job_details['location']} | 🧑‍💼 {job_details['experience']} | 🔧 {job_details['skills']}")
+
+            # --- Click Apply button ---
+            # Check if already applied
+            try:
+                already_applied = driver.find_element(
+                    By.XPATH, "//button[contains(@class, 'MuiButton-textPrimary') and text()='Applied']"
+                )
+                if already_applied:
+                    skipped_count += 1
+                    print(f"    ⏭️  Already applied, skipping")
+                    driver.close()
+                    driver.switch_to.window(main_window)
+                    time.sleep(1)
+                    continue
+            except NoSuchElementException:
+                pass  # Not applied yet, proceed
+
+            try:
+                apply_btn = wait.until(
+                    EC.element_to_be_clickable(
+                        (By.XPATH, "//button[contains(@class, 'MuiButton-textPrimary') and contains(text(), 'Apply')]")
+                    )
+                )
+                apply_btn.click()
+                print(f"    ✅ Clicked Apply")
+                time.sleep(2)
+
+                # Handle screening questions if they appear
+                success = handle_screening_questions(driver, wait, popup, job_title)
+                if success:
+                    applied_count += 1
+                    job_details["applied_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    save_to_excel(job_details, platform="hirist")
+                    print(f"    🎉 [{applied_count}/{application_limit}] Applied: {job_details['position']} @ {job_details['company']}")
+                else:
+                    skipped_count += 1
+                    print(f"    ❌ Skipped (user cancelled / form error): {job_title}")
+
+            except (TimeoutException, NoSuchElementException):
+                print(f"    ⚠️ No Apply button found, skipping")
+            except Exception as e:
+                print(f"    ⚠️ Error applying: {e}")
+
+            # Close the job tab and switch back
+            try:
+                driver.close()
+            except Exception:
+                pass
+            driver.switch_to.window(main_window)
+            time.sleep(1)
+
+        if applied_count >= application_limit:
             print(f"\n  🛑 Application limit reached ({application_limit}).")
             break
 
-        # Try to go to the next page
-        try:
-            next_btn = driver.find_element(
-                By.XPATH, "//button[@aria-label='Go to next page']"
-            )
-            if next_btn.is_enabled():
-                next_btn.click()
-                page_num += 1
-                print(f"\n  ➡️ Navigating to page {page_num}...")
-                time.sleep(3)
-            else:
-                print("\n  ⚠️ Next button is disabled — no more pages.")
+        if not new_job_found:
+            no_new_scrolls += 1
+            print(f"  ⚠️ No new jobs detected after scrolling (attempt {no_new_scrolls}/{max_no_new_scrolls})")
+            if no_new_scrolls >= max_no_new_scrolls:
+                print("  🛑 No new jobs are loading; stopping.")
                 break
-        except NoSuchElementException:
-            print("\n  ⚠️ No more pages available.")
-            break
+        else:
+            no_new_scrolls = 0
+
+        # Scroll to load more jobs
+        print("  ⬇️ Scrolling to load more jobs...")
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(4)
+        scroll_round += 1
 
     return applied_count, skipped_count, total_processed
 

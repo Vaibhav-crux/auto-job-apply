@@ -1,5 +1,5 @@
 # Application Limit on Single Run
-application_limit = 2
+application_limit = 20
 
 # Skip Questions when Tkinter is disabled
 skip_questions = True # False
