@@ -15,6 +15,9 @@ current_country = "India"
 # Your current pincode
 current_pincode = "560001"
 
+# Your phone number
+phone_number = "8303644463"
+
 # Your current salary
 current_salary = 1200000
 
