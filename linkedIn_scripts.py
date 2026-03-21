@@ -435,8 +435,8 @@ def answer_application_questions(driver, wait):
         )
         time.sleep(1)
         
-        # Find all form elements
-        all_questions = modal.find_elements(By.XPATH, ".//div[@data-test-form-element]")
+        # Find all form elements - both standard and text-entity-list types
+        all_questions = modal.find_elements(By.XPATH, ".//div[@data-test-form-element or @data-test-text-entity-list-form-component]")
         
         if not all_questions:
             print("  ℹ️  No form fields found")
@@ -451,17 +451,26 @@ def answer_application_questions(driver, wait):
                 # ============ CHECK IF IT'S A SELECT DROPDOWN ============
                 try:
                     select_elem = question.find_element(By.XPATH, ".//select")
+                    
                     # Find the label
                     label_text = ""
                     try:
+                        # Try finding label for text-entity-list type
                         label_elem = question.find_element(By.XPATH, ".//label")
-                        label_text = label_elem.find_element(By.XPATH, ".//span").text
+                        label_span = label_elem.find_element(By.XPATH, ".//span[not(contains(@class, 'white-space-pre'))]")
+                        label_text = label_span.text.strip()
                     except:
                         label_text = "Unknown"
                     
-                    select = Select(select_elem)
-                    current_value = select.first_selected_option.text
-                    all_options = [opt.text for opt in select.options]
+                    # Extract all options from select element
+                    try:
+                        select = Select(select_elem)
+                        current_value = select.first_selected_option.text
+                        all_options = [opt.text.strip() for opt in select.options if opt.text.strip() and opt.text.strip() != "Select an option"]
+                    except:
+                        print(f"    ⚠️  Failed to extract select options")
+                        continue
+                    
                     label_lower = label_text.lower()
                     
                     # Check if this is an excluded field (NO POPUP)
@@ -492,6 +501,13 @@ def answer_application_questions(driver, wait):
                                 answer = current_state
                             else:
                                 answer = current_city
+                        elif 'comfortable' in label_lower or 'willing' in label_lower:
+                            # Default to Yes for location/preference questions
+                            answer = "Yes"
+                        else:
+                            # Try to match first option if not excluded
+                            if all_options:
+                                answer = all_options[0]
                     
                     # Show popup for non-excluded fields (ALWAYS)
                     final_answer = answer
@@ -529,13 +545,14 @@ def answer_application_questions(driver, wait):
                         # Try partial matching
                         found = False
                         for option in select.options:
-                            if final_answer.lower() in option.text.lower() or option.text.lower() in final_answer.lower():
-                                select.select_by_visible_text(option.text)
+                            opt_text = option.text.strip()
+                            if final_answer.lower() in opt_text.lower() or opt_text.lower() in final_answer.lower():
+                                select.select_by_visible_text(opt_text)
                                 driver.execute_script("""
                                     var event = new Event('change', { bubbles: true });
                                     arguments[0].dispatchEvent(event);
                                 """, select_elem)
-                                print(f"    ✅ Selected: {option.text}")
+                                print(f"    ✅ Selected: {opt_text}")
                                 found = True
                                 break
                         if not found:
@@ -1196,7 +1213,7 @@ def main():
                     print(f"  ❌ Error in page processing loop: {e}")
                     break
             
-            print(f"\n📊 Summary:")
+            print(f"\n Summary:")
             print(f"   ✅ Applied: {applied_count}")
             print(f"   ⏭️  Skipped: {skipped_count}")
             print(f"   📋 Total processed: {applied_count + skipped_count}")
